@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -12,8 +11,6 @@ type PtyBridge struct {
 	session        *Session
 	sessionManager *SessionManager
 	pid            int
-	termHeight     int
-	statusBar      string
 	ptyReader      io.Reader
 	ptyWriter      io.Writer
 	waitFunc       func()
@@ -33,19 +30,7 @@ func (b *PtyBridge) Pid() int {
 	return b.pid
 }
 
-func (b *PtyBridge) drawStatusBar() {
-	if b.termHeight <= 0 || b.statusBar == "" {
-		return
-	}
-	// Save cursor, jump to last row, draw bar in reverse video, restore cursor
-	bar := fmt.Sprintf("\0337\033[%d;1H\033[7m %s \033[0m\033[K\0338", b.termHeight, b.statusBar)
-	os.Stdout.WriteString(bar)
-}
-
 func (b *PtyBridge) startIO() {
-	// Draw initial status bar
-	b.drawStatusBar()
-
 	// PTY output -> real stdout
 	go func() {
 		buf := make([]byte, 4096)
@@ -53,7 +38,6 @@ func (b *PtyBridge) startIO() {
 			n, err := b.ptyReader.Read(buf)
 			if n > 0 {
 				os.Stdout.Write(buf[:n])
-				b.drawStatusBar()
 				if hasPrintableContent(buf, n) {
 					b.session.LastOutputAt = time.Now().UTC().Format(time.RFC3339Nano)
 					if line := extractLastLine(buf[:n]); line != "" {

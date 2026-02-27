@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	"github.com/UserExistsError/conpty"
@@ -11,7 +12,7 @@ import (
 	"golang.org/x/term"
 )
 
-func (b *PtyBridge) Launch(command string, workDir string) error {
+func (b *PtyBridge) Launch(workDir string, bannerFile string, title string) error {
 	// Enable virtual terminal processing on stdout
 	hStdout, _ := windows.GetStdHandle(windows.STD_OUTPUT_HANDLE)
 	var savedOutputMode uint32
@@ -23,14 +24,20 @@ func (b *PtyBridge) Launch(command string, workDir string) error {
 	// Set stdin to raw mode
 	oldState, termErr := term.MakeRaw(int(os.Stdin.Fd()))
 
-	// Launch via ConPTY — reserve bottom row for status bar
 	opts := []conpty.ConPtyOption{conpty.ConPtyWorkDir(workDir)}
 	w, h, sizeErr := term.GetSize(int(os.Stdout.Fd()))
 	if sizeErr == nil {
-		b.termHeight = h
-		opts = append(opts, conpty.ConPtyDimensions(w, h-1))
+		opts = append(opts, conpty.ConPtyDimensions(w, h))
 	}
-	cpty, err := conpty.Start("cmd.exe /c "+command, opts...)
+
+	startCmd := "cmd.exe"
+	if bannerFile != "" {
+		startCmd = fmt.Sprintf(`cmd.exe /k @type "%s" & @del "%s" & @title %s`, bannerFile, bannerFile, title)
+	} else if title != "" {
+		startCmd = fmt.Sprintf(`cmd.exe /k @title %s`, title)
+	}
+
+	cpty, err := conpty.Start(startCmd, opts...)
 	if err != nil {
 		if termErr == nil {
 			term.Restore(int(os.Stdin.Fd()), oldState)

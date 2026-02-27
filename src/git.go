@@ -82,6 +82,10 @@ func (g *GitBackend) Merge(repoPath string, sourceBranch string, branch string) 
 
 func (g *GitBackend) RemoveWorkingCopy(repoPath string, worktreeID string) {
 	wtPath := filepath.Join(repoPath, worktreeDir, worktreeID)
-	runCommand(repoPath, "git", "worktree", "remove", wtPath)
-	runCommand(repoPath, "git", "branch", "-d", worktreeID)
+	runCommand(repoPath, "git", "worktree", "remove", "--force", wtPath)
+	// Clean up directory if git worktree remove didn't fully remove it
+	if _, err := os.Stat(wtPath); err == nil {
+		os.RemoveAll(wtPath)
+	}
+	runCommand(repoPath, "git", "branch", "-D", worktreeID)
 }

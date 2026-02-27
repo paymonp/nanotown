@@ -1,45 +1,21 @@
 package main
 
-import (
-	"fmt"
-	"strings"
-)
-
-type ModelEntry struct {
-	Name    string
-	Command string
+var knownAgents = []string{
+	"claude", "opencode", "aider", "kimi", "codex",
+	"gemini", "copilot", "qwen",
 }
 
-var models = []ModelEntry{
-	{"claude", "claude"},
-	{"opencode", "opencode"},
-	{"aider", "aider"},
-	{"kimi", "kimi"},
-	{"codex", "codex"},
-}
-
-func getModelCommand(name string) (string, error) {
-	for _, m := range models {
-		if m.Name == name {
-			return m.Command, nil
+func detectModel(pid int) string {
+	if pid <= 0 {
+		return ""
+	}
+	children := getChildProcessNames(pid)
+	for _, name := range children {
+		for _, agent := range knownAgents {
+			if name == agent || name == agent+".exe" {
+				return agent
+			}
 		}
 	}
-	return "", fmt.Errorf("unknown model: %s. Supported: %s", name, strings.Join(getModelNames(), ", "))
-}
-
-func isModelSupported(name string) bool {
-	for _, m := range models {
-		if m.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-func getModelNames() []string {
-	names := make([]string, len(models))
-	for i, m := range models {
-		names[i] = m.Name
-	}
-	return names
+	return ""
 }

@@ -20,7 +20,7 @@ type Session struct {
 	StartedAt       string `json:"startedAt"`
 	LastOutputAt    string `json:"lastOutputAt"`
 	LastOutputLine  string `json:"lastOutputLine,omitempty"`
-	Description     string `json:"description,omitempty"`
+	Description     string `json:"description,omitempty"` // deprecated: now stored in .nt-description file
 	Worktree        string `json:"worktree,omitempty"`
 }
 

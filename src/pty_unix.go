@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 
@@ -10,17 +11,30 @@ import (
 	"golang.org/x/term"
 )
 
-func (b *PtyBridge) Launch(command string, workDir string) error {
-	cmd := exec.Command("/bin/sh", "-c", command)
+func (b *PtyBridge) Launch(workDir string, bannerFile string, title string) error {
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+
+	var cmd *exec.Cmd
+	if bannerFile != "" {
+		// Print banner, set title, delete file, then exec into the user's shell
+		script := fmt.Sprintf(`cat "$1"; rm -f "$1"; printf '\033]0;%s\007'; exec "$2"`, title)
+		cmd = exec.Command("/bin/sh", "-c", script, "--", bannerFile, shell)
+	} else if title != "" {
+		script := fmt.Sprintf(`printf '\033]0;%s\007'; exec "$1"`, title)
+		cmd = exec.Command("/bin/sh", "-c", script, "--", shell)
+	} else {
+		cmd = exec.Command(shell)
+	}
 	cmd.Dir = workDir
 	cmd.Env = os.Environ()
 
-	// Start with terminal size — reserve bottom row for status bar
 	var ws *pty.Winsize
 	w, h, sizeErr := term.GetSize(int(os.Stdout.Fd()))
 	if sizeErr == nil {
-		b.termHeight = h
-		ws = &pty.Winsize{Cols: uint16(w), Rows: uint16(h - 1)}
+		ws = &pty.Winsize{Cols: uint16(w), Rows: uint16(h)}
 	}
 	ptmx, err := pty.StartWithSize(cmd, ws)
 	if err != nil {

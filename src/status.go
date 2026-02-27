@@ -51,43 +51,74 @@ func lastActiveTime(s *Session) time.Time {
 	return time.Time{}
 }
 
-// renderStatus builds the status tables as a string and returns the line count.
-func renderStatus(sessions []*Session, sm *SessionManager, repoPath string) (string, int) {
+// refreshSessionInfo runs expensive operations (git, process scanning) and caches results on sessions.
+func refreshSessionInfo(sessions []*Session, sm *SessionManager, worktrees []worktreeInfo) {
 	updateAliveFlags(sessions, sm)
+
+	// Detect models for alive sessions
+	for _, s := range sessions {
+		if s.Alive && isProcessAlive(s.PID) {
+			detected := detectModel(s.PID)
+			if detected != "" {
+				s.Model = detected
+				sm.Write(s) // cache for after exit
+			}
+		}
+	}
+
+	// Cache source branch on each session from worktree info
+	wtBranch := map[string]string{}
+	for _, wt := range worktrees {
+		wtBranch[wt.id] = wt.branch
+	}
+	for _, s := range sessions {
+		wt := resolveWorktreeID(s)
+		branch := wtBranch[wt]
+		if branch == "" && s.WorkingCopyPath != "" {
+			branch = readSourceBranch(s.WorkingCopyPath)
+		}
+		s.SourceBranch = branch
+	}
+}
+
+// renderStatus builds the status tables as a string and returns the line count.
+// Uses pre-computed worktrees and cached session info (no expensive operations).
+func renderStatus(sessions []*Session, worktrees []worktreeInfo) (string, int) {
 	sortSessions(sessions)
 
 	var b strings.Builder
 	lines := 0
 
-	// Build worktree list first (used by both tables)
-	worktrees := listWorktrees(repoPath, sessions)
-	wtBranch := map[string]string{}
+	wtDesc := map[string]string{}
 	for _, wt := range worktrees {
-		wtBranch[wt.id] = wt.sourceBranch
+		wtDesc[wt.id] = wt.description
 	}
 
 	// Sessions table
+	b.WriteString("Sessions")
+	lines++
 	if len(sessions) == 0 {
-		b.WriteString("No active sessions.")
+		b.WriteString("\n  No active sessions.")
 		lines++
 	} else {
-		fmt.Fprintf(&b, "%-7s %-10s %-12s %-10s %-10s %-16s %-10s %-12s %s",
-			"SESSION", "MODEL", "STATUS", "BRANCH", "WORKTREE", "REPO", "STARTED", "LAST ACTIVE", "DESCRIPTION")
+		fmt.Fprintf(&b, "\n%-16s %-10s %-7s %-10s %-12s %-10s %-10s %-12s %s",
+			"REPO", "BRANCH", "SESSION", "MODEL", "STATUS", "WORKTREE", "STARTED", "LAST ACTIVE", "DESCRIPTION")
 		lines++
 
 		for _, s := range sessions {
+			model := s.Model
+			if model == "" {
+				model = "\u2014"
+			}
 			status := formatSessionStatus(s, true)
 			started := formatTimeAgo(s.StartedAt)
-			wt := s.Worktree
-			if wt == "" {
-				wt = s.ID
-			}
-			branch := wtBranch[wt]
+			wt := resolveWorktreeID(s)
+			branch := s.SourceBranch
 			if branch == "" {
 				branch = "?"
 			}
-			fmt.Fprintf(&b, "\n%-7s %-10s %s %-10s %-10s %-16s %-10s %-12s %s",
-				s.ID, s.Model, status, branch, wt, shortRepoPath(s.RepoPath), started, formatTimeAgo(s.LastOutputAt), s.Description)
+			fmt.Fprintf(&b, "\n%-16s %-10s %-7s %-10s %s %-10s %-10s %-12s %s",
+				shortRepoPath(s.RepoPath), branch, s.ID, model, status, wt, started, formatTimeAgo(s.LastOutputAt), wtDesc[wt])
 			lines++
 		}
 	}
@@ -96,14 +127,16 @@ func renderStatus(sessions []*Session, sm *SessionManager, repoPath string) (str
 	if len(worktrees) > 0 {
 		fmt.Fprintf(&b, "\n")
 		lines++
-		fmt.Fprintf(&b, "\n%-10s %-10s %s", "BRANCH", "WORKTREE", "SESSIONS")
+		fmt.Fprintf(&b, "\nWorktrees")
+		lines++
+		fmt.Fprintf(&b, "\n%-16s %-10s %-10s %-10s %s", "REPO", "BRANCH", "WORKTREE", "SESSIONS", "DESCRIPTION")
 		lines++
 		for _, wt := range worktrees {
-			branch := wt.sourceBranch
+			branch := wt.branch
 			if branch == "" {
 				branch = "?"
 			}
-			fmt.Fprintf(&b, "\n%-10s %-10s %s", branch, wt.id, wt.sessionList)
+			fmt.Fprintf(&b, "\n%-16s %-10s %-10s %-10s %s", shortRepoPath(wt.repo), branch, wt.id, wt.sessionList, wt.description)
 			lines++
 		}
 	}
@@ -117,49 +150,76 @@ func renderStatus(sessions []*Session, sm *SessionManager, repoPath string) (str
 }
 
 type worktreeInfo struct {
-	id           string
-	sourceBranch string
-	sessionList  string
+	id          string
+	repo        string
+	branch      string
+	description string
+	sessionList string
 }
 
-// listWorktrees scans .nanotown/ for worktree directories and maps sessions to each.
-func listWorktrees(repoPath string, sessions []*Session) []worktreeInfo {
-	if repoPath == "" {
-		return nil
-	}
-	ntDir := filepath.Join(repoPath, ".nanotown")
-	entries, err := os.ReadDir(ntDir)
+// readSourceBranch reads the source branch from the .nt-source-branch file in a worktree directory.
+func readSourceBranch(wtPath string) string {
+	data, err := os.ReadFile(filepath.Join(wtPath, ".nt-source-branch"))
 	if err != nil {
-		return nil
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// resolveWorktreeID extracts the worktree ID from a session's WorkingCopyPath.
+func resolveWorktreeID(s *Session) string {
+	if s.WorkingCopyPath != "" {
+		return filepath.Base(s.WorkingCopyPath)
+	}
+	if s.Worktree != "" {
+		return s.Worktree
+	}
+	return s.ID
+}
+
+// listWorktrees scans .nanotown/ directories across all repos referenced by sessions.
+func listWorktrees(sessions []*Session) []worktreeInfo {
+	// Collect unique repo paths from sessions
+	repoPaths := map[string]bool{}
+	for _, s := range sessions {
+		if s.RepoPath != "" {
+			repoPaths[s.RepoPath] = true
+		}
 	}
 
 	// Build map of worktree ID -> session IDs
 	wtSessions := map[string][]string{}
 	for _, s := range sessions {
-		wt := s.Worktree
-		if wt == "" {
-			wt = s.ID
-		}
+		wt := resolveWorktreeID(s)
 		wtSessions[wt] = append(wtSessions[wt], s.ID)
 	}
 
 	var result []worktreeInfo
-	for _, entry := range entries {
-		if !entry.IsDir() {
+	for repoPath := range repoPaths {
+		ntDir := filepath.Join(repoPath, ".nanotown")
+		entries, err := os.ReadDir(ntDir)
+		if err != nil {
 			continue
 		}
-		name := entry.Name()
-		sessionIDs := wtSessions[name]
-		label := "(none)"
-		if len(sessionIDs) > 0 {
-			label = strings.Join(sessionIDs, ", ")
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			sessionIDs := wtSessions[name]
+			label := "(none)"
+			if len(sessionIDs) > 0 {
+				label = strings.Join(sessionIDs, ", ")
+			}
+			wtPath := filepath.Join(ntDir, name)
+			branch := readSourceBranch(wtPath)
+			desc := ""
+			data, err := os.ReadFile(filepath.Join(wtPath, ".nt-description"))
+			if err == nil {
+				desc = strings.TrimSpace(string(data))
+			}
+			result = append(result, worktreeInfo{id: name, repo: repoPath, branch: branch, description: desc, sessionList: label})
 		}
-		source := ""
-		data, err := os.ReadFile(filepath.Join(ntDir, name, ".nt-source-branch"))
-		if err == nil {
-			source = strings.TrimSpace(string(data))
-		}
-		result = append(result, worktreeInfo{id: name, sourceBranch: source, sessionList: label})
 	}
 	return result
 }

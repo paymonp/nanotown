@@ -36,17 +36,17 @@ func run(args []string) error {
 	command := args[0]
 	switch command {
 	case "status":
-		return cmdLiveStatus(sm, cwd)
+		return cmdLiveStatus(sm)
 	case "stop":
 		if len(args) < 2 {
-			return fmt.Errorf("usage: nt stop <session-id>")
+			return fmt.Errorf("usage: nt stop <worktree-id>")
 		}
-		return cmdStop(args[1], sm)
+		return cmdStop(args[1], sm, cwd)
 	case "stopall":
 		return cmdStopAll(sm, cwd)
 	case "delete":
 		if len(args) < 2 {
-			return fmt.Errorf("usage: nt delete <session-id>")
+			return fmt.Errorf("usage: nt delete <worktree-id>")
 		}
 		return cmdRm(args[1], sm, cwd)
 	case "merge":
@@ -58,23 +58,16 @@ func run(args []string) error {
 		return cmdAutoClean(sm)
 	case "deleteall":
 		return cmdDeleteAll(sm, cwd)
-	case "models":
-		for _, name := range getModelNames() {
-			fmt.Println(name)
-		}
-		return nil
 	case "help":
 		printUsage()
 		return nil
 	default:
-		if isModelSupported(command) {
-			worktreeID, desc := parseSessionArgs(args[1:])
-			return startSession(command, sm, cwd, desc, worktreeID)
+		// Treat all non-command args as session creation: nt <desc> or nt -w <id> [desc]
+		worktreeID, desc := parseSessionArgs(args)
+		if worktreeID == "" && desc == "" {
+			return fmt.Errorf("description is required. Usage: nt <desc>")
 		}
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", command)
-		printUsage()
-		os.Exit(1)
-		return nil
+		return startSession(sm, cwd, desc, worktreeID)
 	}
 }
 
@@ -82,20 +75,19 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "Usage: nt <command>")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Lifecycle:")
-	fmt.Fprintln(os.Stderr, "  nt <model> [desc]             Launch a session")
-	fmt.Fprintln(os.Stderr, "  nt <model> -w <id> [desc]     Launch a session with a custom worktree ID")
+	fmt.Fprintln(os.Stderr, "  nt <desc>                     Launch a session")
+	fmt.Fprintln(os.Stderr, "  nt -w <worktree-id> [desc]    Launch a session with a custom worktree ID")
 	fmt.Fprintln(os.Stderr, "  nt status                     Show all sessions (live-updating)")
-	fmt.Fprintln(os.Stderr, "  nt merge <worktree>           Merge into your current VCS branch and clean up")
+	fmt.Fprintln(os.Stderr, "  nt merge <worktree-id>        Merge into your current VCS branch and clean up")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Cleanup:")
-	fmt.Fprintln(os.Stderr, "  nt stop <id>                  Stop a running session")
+	fmt.Fprintln(os.Stderr, "  nt stop <worktree-id>         Stop all running sessions on a worktree")
 	fmt.Fprintln(os.Stderr, "  nt stopall                    Stop all running sessions")
 	fmt.Fprintln(os.Stderr, "  nt clean                      Remove stopped sessions and orphaned worktrees")
-	fmt.Fprintln(os.Stderr, "  nt delete <id|worktree>       Delete a session or worktree")
+	fmt.Fprintln(os.Stderr, "  nt delete <worktree-id>       Delete a worktree and its sessions")
 	fmt.Fprintln(os.Stderr, "  nt deleteall                  Delete all sessions and worktrees")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Info:")
-	fmt.Fprintln(os.Stderr, "  nt models                     List supported models")
 	fmt.Fprintln(os.Stderr, "  nt help                       Show this help message")
 }
 
@@ -114,15 +106,10 @@ func parseSessionArgs(args []string) (worktreeID string, desc string) {
 	return
 }
 
-func startSession(modelName string, sm *SessionManager, cwd string, desc string, worktreeID string) error {
+func startSession(sm *SessionManager, cwd string, desc string, worktreeID string) error {
 	vcs := detectVcs(cwd)
 	if vcs == nil {
 		return fmt.Errorf("not inside a version-controlled repository")
-	}
-
-	modelCommand, err := getModelCommand(modelName)
-	if err != nil {
-		return err
 	}
 
 	repoPath, err := vcs.GetRepoRoot(cwd)
@@ -163,14 +150,16 @@ func startSession(modelName string, sm *SessionManager, cwd string, desc string,
 		}
 	}
 
-	// Record source branch in the worktree directory so it persists across session deletions
+	// Record worktree metadata that persists across session deletions
 	os.WriteFile(filepath.Join(wtPath, ".nt-source-branch"), []byte(sourceBranch), 0644)
+	if desc != "" {
+		os.WriteFile(filepath.Join(wtPath, ".nt-description"), []byte(desc), 0644)
+	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 
 	session := &Session{
 		ID:              id,
-		Model:           modelName,
 		RepoPath:        repoPath,
 		WorkingCopyPath: wtPath,
 		VcsBackendName:  vcs.Name(),
@@ -178,33 +167,29 @@ func startSession(modelName string, sm *SessionManager, cwd string, desc string,
 		PID:             -1,
 		StartedAt:       now,
 		LastOutputAt:    now,
-		Description:     desc,
 		Worktree:        worktreeID,
 	}
 	if err := sm.Write(session); err != nil {
 		return err
 	}
 
-	fmt.Printf("Session %s started on worktree %s\n", id, worktreeID)
-
 	// Set env vars so the session ID is discoverable from inside
 	os.Setenv("NT_SESSION", id)
 	os.Setenv("NT_BRANCH", worktreeID)
-	os.Setenv("NT_MODEL", modelName)
 	defer os.Unsetenv("NT_SESSION")
 	defer os.Unsetenv("NT_BRANCH")
-	defer os.Unsetenv("NT_MODEL")
 
-	// Alternate screen buffer preserves terminal history, restored on exit
-	fmt.Print("\033[?1049h")
+	// Write banner to a temp file so the shell can display it on startup
+	bannerFile := filepath.Join(wtPath, ".nt-banner")
+	os.WriteFile(bannerFile, []byte(formatBanner(id, worktreeID, desc)), 0644)
+	defer os.Remove(bannerFile)
 
 	bridge := &PtyBridge{
 		session:        session,
 		sessionManager: sm,
-		statusBar:      formatStatusBar(modelName, id, worktreeID, desc),
 	}
-	if err := bridge.Launch(modelCommand, wtPath); err != nil {
-		fmt.Print("\033[?1049l")
+	title := formatTitle(worktreeID, desc)
+	if err := bridge.Launch(wtPath, bannerFile, title); err != nil {
 		return fmt.Errorf("failed to launch PTY process: %w", err)
 	}
 
@@ -215,35 +200,30 @@ func startSession(modelName string, sm *SessionManager, cwd string, desc string,
 
 	bridge.WaitFor()
 
-	fmt.Print("\033[?1049l")
-
 	session.Alive = false
 	sm.Write(session) // best-effort
 	fmt.Printf("Session %s exited.\n", id)
 	return nil
 }
 
-func cmdLiveStatus(sm *SessionManager, cwd string) error {
+func cmdLiveStatus(sm *SessionManager) error {
 	// Hide cursor
 	fmt.Print("\033[?25l")
 	defer fmt.Print("\033[?25h")
 
-	var repoPath string
-	vcs := detectVcs(cwd)
-	if vcs != nil {
-		repoPath, _ = vcs.GetRepoRoot(cwd)
-	}
-
 	var sessions []*Session
+	var worktrees []worktreeInfo
 	prevLines := 0
 	tick := 0
 	for {
-		// Re-read session files every 1s (every 10th tick)
+		// Re-read session files and run expensive operations every 1s (every 10th tick)
 		if tick%10 == 0 {
 			sessions = sm.ListAll()
+			worktrees = listWorktrees(sessions)
+			refreshSessionInfo(sessions, sm, worktrees)
 		}
 
-		output, lines := renderStatus(sessions, sm, repoPath)
+		output, lines := renderStatus(sessions, worktrees)
 
 		// Move cursor up to overwrite previous frame
 		if prevLines > 0 {
@@ -289,21 +269,35 @@ func stopSession(session *Session, sm *SessionManager) {
 	sm.Write(session) // best-effort
 }
 
-func cmdStop(id string, sm *SessionManager) error {
-	session := sm.Read(id)
-	if session == nil {
-		return fmt.Errorf("session not found: %s", id)
+func cmdStop(worktreeID string, sm *SessionManager, cwd string) error {
+	stopped := 0
+	for _, s := range sm.ListAll() {
+		wt := resolveWorktreeID(s)
+		if wt == worktreeID && s.Alive && isProcessAlive(s.PID) {
+			stopSession(s, sm)
+			stopped++
+		}
 	}
-	if !session.Alive || !isProcessAlive(session.PID) {
-		fmt.Fprintf(os.Stderr, "Session %s is not running.\n", id)
+	if stopped == 0 {
+		// Check if the worktree even exists
+		vcs := detectVcs(cwd)
+		if vcs != nil {
+			repoPath, _ := vcs.GetRepoRoot(cwd)
+			if repoPath != "" {
+				wtPath := filepath.Join(repoPath, ".nanotown", worktreeID)
+				if _, err := os.Stat(wtPath); err != nil {
+					return fmt.Errorf("worktree not found: %s", worktreeID)
+				}
+			}
+		}
+		fmt.Fprintf(os.Stderr, "No running sessions on worktree %s.\n", worktreeID)
 		return nil
 	}
-	stopSession(session, sm)
-	fmt.Printf("Session %s stopped.\n", id)
+	fmt.Printf("Stopped %d session(s) on worktree %s.\n", stopped, worktreeID)
 	return nil
 }
 
-func cmdRm(target string, sm *SessionManager, cwd string) error {
+func cmdRm(worktreeID string, sm *SessionManager, cwd string) error {
 	vcs := detectVcs(cwd)
 	if vcs == nil {
 		return fmt.Errorf("not inside a version-controlled repository")
@@ -313,41 +307,22 @@ func cmdRm(target string, sm *SessionManager, cwd string) error {
 		return err
 	}
 
-	// Try as session ID first
-	session := sm.Read(target)
-	if session != nil {
-		stopSession(session, sm)
-		wt := session.Worktree
-		if wt == "" {
-			wt = session.ID // legacy fallback
-		}
-		// Only remove worktree if no other sessions share it
-		otherUsingWorktree := false
-		for _, s := range sm.ListAll() {
-			swt := s.Worktree
-			if swt == "" {
-				swt = s.ID
-			}
-			if s.ID != session.ID && swt == wt {
-				otherUsingWorktree = true
-				break
-			}
-		}
-		if !otherUsingWorktree {
-			vcs.RemoveWorkingCopy(repoPath, wt)
-		}
-		sm.Delete(session.ID)
-		fmt.Printf("Session %s removed.\n", target)
-		return nil
+	wtPath := filepath.Join(repoPath, ".nanotown", worktreeID)
+	if _, err := os.Stat(wtPath); err != nil {
+		return fmt.Errorf("worktree not found: %s", worktreeID)
 	}
 
-	// Treat as worktree ID — remove worktree and branch
-	wtPath := filepath.Join(repoPath, ".nanotown", target)
-	if _, err := os.Stat(wtPath); err != nil {
-		return fmt.Errorf("worktree not found: %s", target)
+	// Stop all sessions on this worktree and delete them
+	for _, s := range sm.ListAll() {
+		wt := resolveWorktreeID(s)
+		if wt == worktreeID {
+			stopSession(s, sm)
+			sm.Delete(s.ID)
+		}
 	}
-	vcs.RemoveWorkingCopy(repoPath, target)
-	fmt.Printf("Worktree %s deleted.\n", target)
+
+	vcs.RemoveWorkingCopy(repoPath, worktreeID)
+	fmt.Printf("Worktree %s deleted.\n", worktreeID)
 	return nil
 }
 
@@ -375,12 +350,9 @@ func cmdMerge(target string, sm *SessionManager, cwd string) error {
 
 	// Check if any running sessions use this worktree
 	for _, s := range sm.ListAll() {
-		wt := s.Worktree
-		if wt == "" {
-			wt = s.ID
-		}
+		wt := resolveWorktreeID(s)
 		if wt == target && s.Alive && isProcessAlive(s.PID) {
-			return fmt.Errorf("session %s is still running on worktree %s. Stop it first with: nt stop %s", s.ID, target, s.ID)
+			return fmt.Errorf("session %s is still running on worktree %s. Stop it first with: nt stop %s", s.ID, target, target)
 		}
 	}
 
@@ -413,10 +385,7 @@ func cmdMerge(target string, sm *SessionManager, cwd string) error {
 		vcs.RemoveWorkingCopy(repoPath, target)
 		// Clean up any sessions that used this worktree
 		for _, s := range sm.ListAll() {
-			wt := s.Worktree
-			if wt == "" {
-				wt = s.ID
-			}
+			wt := resolveWorktreeID(s)
 			if wt == target {
 				sm.Delete(s.ID)
 			}
@@ -509,20 +478,14 @@ func cmdAutoClean(sm *SessionManager) error {
 			}
 		}
 
-		wt := s.Worktree
-		if wt == "" {
-			wt = s.ID
-		}
+		wt := resolveWorktreeID(s)
 		// Only remove worktree if no other session still references it
 		otherUsing := false
 		for _, other := range sessions {
 			if other.ID == s.ID {
 				continue
 			}
-			owt := other.Worktree
-			if owt == "" {
-				owt = other.ID
-			}
+			owt := resolveWorktreeID(other)
 			if owt == wt && other.Alive && isProcessAlive(other.PID) {
 				otherUsing = true
 				break
@@ -544,10 +507,7 @@ func cmdAutoClean(sm *SessionManager) error {
 	referenced := map[string]bool{}
 	repoPathForOrphan := ""
 	for _, s := range remainingSessions {
-		wt := s.Worktree
-		if wt == "" {
-			wt = s.ID
-		}
+		wt := resolveWorktreeID(s)
 		referenced[wt] = true
 		repoPathForOrphan = s.RepoPath
 	}
@@ -645,10 +605,7 @@ func cmdDeleteAll(sm *SessionManager, cwd string) error {
 	removedWorktrees := map[string]bool{}
 	for _, s := range sessions {
 		stopSession(s, sm)
-		wt := s.Worktree
-		if wt == "" {
-			wt = s.ID
-		}
+		wt := resolveWorktreeID(s)
 		if !removedWorktrees[wt] {
 			vcs.RemoveWorkingCopy(repoPath, wt)
 			removedWorktrees[wt] = true
@@ -678,10 +635,29 @@ func cmdDeleteAll(sm *SessionManager, cwd string) error {
 	return nil
 }
 
-func formatStatusBar(model, id, branch, name string) string {
-	bar := fmt.Sprintf("nt — %s [%s] on %s", model, id, branch)
-	if name != "" {
-		bar += " — " + name
+func formatBanner(id, worktreeID, desc string) string {
+	var b strings.Builder
+	b.WriteString("\n  nanotown session started\n")
+	fmt.Fprintf(&b, "  session %-6s worktree %s\n", id, worktreeID)
+	if desc != "" {
+		fmt.Fprintf(&b, "  %s\n", desc)
 	}
-	return bar
+	b.WriteString("\n  Type exit to end the session.\n\n")
+	return b.String()
+}
+
+func formatTitle(worktreeID, desc string) string {
+	title := fmt.Sprintf("[%s]", worktreeID)
+	if desc != "" {
+		title += " " + desc
+	}
+	return title
+}
+
+func readWorktreeDesc(wtPath string) string {
+	data, err := os.ReadFile(filepath.Join(wtPath, ".nt-description"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }

@@ -5,7 +5,7 @@
 
 A simple way to run and manage multiple AI agents on the same machine. No servers or databases.
 
-Each agent gets its own isolated VCS worktree and its own terminal. You check on them with `nt status`, and merge their work back when they're done.
+Each session gets its own isolated VCS worktree and its own terminal. You check on them with `nt status`, and merge their work back when they're done.
 
 ## Install
 
@@ -26,12 +26,12 @@ No runtime dependencies. Downloads a single native binary for your platform.
 ### Start a session
 
 ```
-nt claude "fix the auth bug"
+nt "fix the auth bug"
 ```
 
-This creates an isolated worktree, launches the agent inside it via a PTY, and gives you a fully interactive terminal session. You talk to the agent directly — nanotown is invisible.
+This creates an isolated worktree and drops you into an interactive shell inside it. Run whatever agent you want — Claude Code, Aider, OpenCode, or anything else. nanotown is just the worktree and session manager.
 
-Use `-w <id>` to specify a custom worktree ID. Worktrees are reused if they already exist, and multiple sessions can share one. Without `-w`, each session gets its own auto-generated worktree ID.
+Use `-w <worktree-id>` to specify a custom worktree ID. Worktrees are reused if they already exist, and multiple sessions can share one. Without `-w`, each session gets its own auto-generated worktree ID (`nt-1`, `nt-2`, etc).
 
 ### Check on your sessions
 
@@ -40,17 +40,21 @@ nt status
 ```
 
 ```
-SESSION MODEL      STATUS       BRANCH     WORKTREE   REPO             STARTED    LAST ACTIVE  DESCRIPTION
-1       claude     active       main       auth-bug   user/myproject   2m ago     1m ago       fix the auth bug
-2       kimi       idle 45s     main       auth-fix   user/myproject   15m ago    5m ago       add tests
-3       codex      exited       main       refactor   user/myproject   1h ago     45m ago      refactor db layer
-4       codex      exited       main       refactor   user/myproject   1h ago     45m ago      refactor auth layer
+Sessions
+REPO             BRANCH     SESSION MODEL      STATUS       WORKTREE   STARTED    LAST ACTIVE  DESCRIPTION
+user/myproject   main       1       claude     ⠋ active     auth-bug   2m ago     1m ago       fix the auth bug
+user/myproject   main       2       kimi       ⠋ idle 45s   auth-fix   15m ago    5m ago       add tests
+user/myproject   main       3       —          exited       refactor   1h ago     45m ago      refactor db layer
+user/myproject   main       4       —          exited       refactor   1h ago     45m ago      refactor auth layer
 
-BRANCH     WORKTREE   SESSIONS
-main       auth-bug   1
-main       auth-fix   2
-main       refactor   3, 4
+Worktrees
+REPO             BRANCH     WORKTREE   SESSIONS   DESCRIPTION
+user/myproject   main       auth-bug   1          fix the auth bug
+user/myproject   main       auth-fix   2          add tests
+user/myproject   main       refactor   3, 4       refactor db layer
 ```
+
+Live-updating display. The MODEL column auto-detects which agent is running by scanning child processes. For exited sessions it shows the last detected agent, or `—` if none was detected. Sessions and worktrees from all repos are shown.
 
 ### Merge work back
 
@@ -60,6 +64,23 @@ nt merge auth-bug
 
 Merges a worktree into your current VCS branch. If the worktree was created from a different branch, you'll get a warning before proceeding.
 
+## Commands
+
+```
+Lifecycle:
+  nt <desc>                     Launch a session
+  nt -w <worktree-id> [desc]    Launch a session with a custom worktree ID
+  nt status                     Show all sessions (live-updating)
+  nt merge <worktree-id>        Merge into your current VCS branch and clean up
+
+Cleanup:
+  nt stop <worktree-id>         Stop all running sessions on a worktree
+  nt stopall                    Stop all running sessions
+  nt clean                      Remove stopped sessions and orphaned worktrees
+  nt delete <worktree-id>       Delete a worktree and its sessions
+  nt deleteall                  Delete all sessions and worktrees
+```
+
 ## How it works
 
 Each session gets its own git worktree and branch under `.nanotown/` in your repo. The agent runs inside it via a PTY with full terminal passthrough. When done, `nt merge` brings the work back into your current branch.
@@ -68,15 +89,20 @@ No daemon, no background process, no database.
 
 ## Supported agents
 
-| Agent | Command |
-|-------|---------|
+nanotown auto-detects these agents when they're running inside a session:
+
+| Agent | Process name |
+|-------|--------------|
 | Claude Code | `claude` |
 | OpenCode | `opencode` |
 | Aider | `aider` |
 | Kimi | `kimi` |
 | Codex | `codex` |
+| Gemini CLI | `gemini` |
+| GitHub Copilot CLI | `copilot` |
+| Qwen Code | `qwen` |
 
-The agent CLI must be installed separately on your system.
+You can run any CLI tool inside a session — these are just the ones that `nt status` recognizes for the MODEL column.
 
 ## .gitignore
 
@@ -104,4 +130,4 @@ build_release.bat 0.2.0    # builds to releases/0.2.0-1/
 
 ## License
 
-[FSL-1.1-ALv2](LICENSE.md) — Functional Source License. Free to use, modify, and redistribute for any purpose except building a competing product. Converts to Apache 2.0 after two years.
+[MIT](LICENSE.md)
