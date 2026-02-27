@@ -10,16 +10,13 @@ const worktreeDir = ".nanotown"
 
 type GitBackend struct{}
 
-func (g *GitBackend) Name() string {
-	return "git"
-}
-
 func (g *GitBackend) Detect(path string) bool {
 	current := path
 	for {
 		gitPath := filepath.Join(current, ".git")
-		info, err := os.Stat(gitPath)
-		if err == nil && (info.IsDir() || !info.IsDir()) {
+		// .git is a directory in normal repos, but a file in git worktrees
+		_, err := os.Stat(gitPath)
+		if err == nil {
 			return true
 		}
 		parent := filepath.Dir(current)
@@ -83,9 +80,9 @@ func (g *GitBackend) Merge(repoPath string, sourceBranch string, branch string) 
 func (g *GitBackend) RemoveWorkingCopy(repoPath string, worktreeID string) {
 	wtPath := filepath.Join(repoPath, worktreeDir, worktreeID)
 	runCommand(repoPath, "git", "worktree", "remove", "--force", wtPath)
-	// Clean up directory if git worktree remove didn't fully remove it
 	if _, err := os.Stat(wtPath); err == nil {
-		os.RemoveAll(wtPath)
+		os.RemoveAll(wtPath) // fallback if git worktree remove fails (e.g., corrupted metadata)
 	}
+	// Delete the branch too — nanotown creates one branch per worktree with the same name
 	runCommand(repoPath, "git", "branch", "-D", worktreeID)
 }

@@ -13,7 +13,7 @@ import (
 )
 
 func (b *PtyBridge) Launch(workDir string, bannerFile string, title string) error {
-	// Enable virtual terminal processing on stdout
+	// Windows consoles don't process ANSI escapes by default; enable VT processing
 	hStdout, _ := windows.GetStdHandle(windows.STD_OUTPUT_HANDLE)
 	var savedOutputMode uint32
 	hasOutput := windows.GetConsoleMode(hStdout, &savedOutputMode) == nil
@@ -32,6 +32,7 @@ func (b *PtyBridge) Launch(workDir string, bannerFile string, title string) erro
 
 	startCmd := "cmd.exe"
 	if bannerFile != "" {
+		// /k runs commands then stays open; @ suppresses command echo
 		startCmd = fmt.Sprintf(`cmd.exe /k @type "%s" & @del "%s" & @title %s`, bannerFile, bannerFile, title)
 	} else if title != "" {
 		startCmd = fmt.Sprintf(`cmd.exe /k @title %s`, title)

@@ -3,7 +3,7 @@
   <h1>nanotown</h1>
 </p>
 
-A simple way to run and manage multiple AI agents on the same machine. No servers or databases.
+A simple way to run and manage multiple AI agents operating on different worktrees on the same machine. No servers or databases.
 
 Each session gets its own isolated VCS worktree and its own terminal. You check on them with `nt status`, and merge their work back when they're done.
 

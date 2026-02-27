@@ -13,15 +13,12 @@ type Session struct {
 	Model           string `json:"model"`
 	RepoPath        string `json:"repoPath"`
 	WorkingCopyPath string `json:"workingCopyPath"`
-	SourceBranch    string `json:"sourceBranch,omitempty"` // deprecated: now stored in .nt-source-branch file
-	VcsBackendName  string `json:"vcsBackend"`
+	SourceBranch    string `json:"sourceBranch,omitempty"` // cache for display; authoritative source is .nt-source-branch file
 	Alive           bool   `json:"alive"`
 	PID             int    `json:"pid"`
 	StartedAt       string `json:"startedAt"`
 	LastOutputAt    string `json:"lastOutputAt"`
-	LastOutputLine  string `json:"lastOutputLine,omitempty"`
-	Description     string `json:"description,omitempty"` // deprecated: now stored in .nt-description file
-	Worktree        string `json:"worktree,omitempty"`
+	Worktree        string `json:"worktree,omitempty"` // fallback; prefer resolveWorktreeID() which uses WorkingCopyPath
 }
 
 type SessionManager struct {
@@ -48,19 +45,6 @@ func (sm *SessionManager) Write(s *Session) error {
 		return fmt.Errorf("failed to write session file: %w", err)
 	}
 	return nil
-}
-
-func (sm *SessionManager) Read(id string) *Session {
-	path := filepath.Join(sm.dir, id+".json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-	var s Session
-	if err := json.Unmarshal(data, &s); err != nil {
-		return nil
-	}
-	return &s
 }
 
 func (sm *SessionManager) ListAll() []*Session {
@@ -102,13 +86,3 @@ func (sm *SessionManager) Delete(id string) {
 	os.Remove(path)
 }
 
-func (sm *SessionManager) Exists(id string) bool {
-	path := filepath.Join(sm.dir, id+".json")
-	_, err := os.Stat(path)
-	return err == nil
-}
-
-func fatalSession(msg string, args ...interface{}) {
-	fmt.Fprintf(os.Stderr, msg+"\n", args...)
-	os.Exit(1)
-}

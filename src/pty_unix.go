@@ -19,7 +19,8 @@ func (b *PtyBridge) Launch(workDir string, bannerFile string, title string) erro
 
 	var cmd *exec.Cmd
 	if bannerFile != "" {
-		// Print banner, set title, delete file, then exec into the user's shell
+		// Print banner, set title via OSC escape, delete temp file, then exec into
+		// the user's shell. exec replaces /bin/sh so the user gets their normal shell.
 		script := fmt.Sprintf(`cat "$1"; rm -f "$1"; printf '\033]0;%s\007'; exec "$2"`, title)
 		cmd = exec.Command("/bin/sh", "-c", script, "--", bannerFile, shell)
 	} else if title != "" {

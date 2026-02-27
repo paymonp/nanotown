@@ -33,12 +33,13 @@ func killProcess(pid int) {
 	p.Kill()
 }
 
+// Windows has no SIGTERM equivalent — Process.Kill() is always a hard kill
 func forceKillProcess(pid int) {
 	killProcess(pid)
 }
 
 func setupConsoleEncoding() {
-	windows.SetConsoleOutputCP(65001)
+	windows.SetConsoleOutputCP(65001) // UTF-8 codepage
 	windows.SetConsoleCP(65001)
 }
 
@@ -83,7 +84,7 @@ func getChildProcessNames(pid int) []string {
 	var names []string
 	for _, p := range procs {
 		if p.pid != target && descendants[p.pid] {
-			names = append(names, strings.ToLower(p.name))
+			names = append(names, strings.ToLower(p.name)) // Windows process names are case-insensitive
 		}
 	}
 	return names

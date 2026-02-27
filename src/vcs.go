@@ -1,7 +1,6 @@
 package main
 
 type VcsBackend interface {
-	Name() string
 	Detect(path string) bool
 	GetRepoRoot(cwd string) (string, error)
 	GetCurrentBranch(repoPath string) (string, error)

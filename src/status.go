@@ -11,6 +11,7 @@ import (
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
+// Derives frame from wall clock so all spinners animate in sync
 func spinnerFrame() string {
 	return spinnerFrames[int(time.Now().UnixMilli()/80)%len(spinnerFrames)]
 }
@@ -30,7 +31,7 @@ func statusOrder(s *Session) int {
 	if s.Alive && isProcessAlive(s.PID) {
 		t, err := time.Parse(time.RFC3339Nano, s.LastOutputAt)
 		if err != nil || time.Since(t).Seconds() < 2 {
-			return 0 // active
+			return 0 // active — 2s threshold prevents flickering during normal agent pauses
 		}
 		return 1 // idle
 	}
@@ -166,7 +167,8 @@ func readSourceBranch(wtPath string) string {
 	return strings.TrimSpace(string(data))
 }
 
-// resolveWorktreeID extracts the worktree ID from a session's WorkingCopyPath.
+// resolveWorktreeID returns the worktree ID for a session.
+// Priority: WorkingCopyPath (canonical), then explicit Worktree field, then session ID.
 func resolveWorktreeID(s *Session) string {
 	if s.WorkingCopyPath != "" {
 		return filepath.Base(s.WorkingCopyPath)
@@ -243,13 +245,6 @@ func shortRepoPath(fullPath string) string {
 		return parts[0]
 	}
 	return fullPath
-}
-
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-1] + "…"
 }
 
 func formatSessionStatus(s *Session, showSpinner bool) string {

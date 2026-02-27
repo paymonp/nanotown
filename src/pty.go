@@ -3,7 +3,6 @@ package main
 import (
 	"io"
 	"os"
-	"strings"
 	"time"
 )
 
@@ -40,9 +39,6 @@ func (b *PtyBridge) startIO() {
 				os.Stdout.Write(buf[:n])
 				if hasPrintableContent(buf, n) {
 					b.session.LastOutputAt = time.Now().UTC().Format(time.RFC3339Nano)
-					if line := extractLastLine(buf[:n]); line != "" {
-						b.session.LastOutputLine = line
-					}
 					b.sessionManager.Write(b.session) // best-effort
 				}
 			}
@@ -67,47 +63,6 @@ func (b *PtyBridge) startIO() {
 	}()
 }
 
-// stripAnsi removes ANSI escape sequences and carriage returns from raw bytes.
-func stripAnsi(data []byte) string {
-	var result []byte
-	inEscape := false
-	for i := 0; i < len(data); i++ {
-		b := data[i]
-		if b == 0x1B {
-			inEscape = true
-			continue
-		}
-		if inEscape {
-			if (b >= 0x40 && b <= 0x7E) || b == 0x07 {
-				inEscape = false
-			}
-			continue
-		}
-		if b == '\r' {
-			continue
-		}
-		result = append(result, b)
-	}
-	return string(result)
-}
-
-// extractLastLine strips ANSI from a raw output chunk and returns the last
-// non-empty line, truncated to 120 chars.
-func extractLastLine(data []byte) string {
-	cleaned := stripAnsi(data)
-	lines := strings.Split(cleaned, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line != "" {
-			if len(line) > 120 {
-				line = line[:120]
-			}
-			return line
-		}
-	}
-	return ""
-}
-
 // hasPrintableContent returns true if the buffer contains at least one
 // printable character, filtering out pure ANSI escape sequences.
 func hasPrintableContent(buf []byte, length int) bool {
@@ -119,12 +74,13 @@ func hasPrintableContent(buf []byte, length int) bool {
 			continue
 		}
 		if inEscape {
+			// 0x40-0x7E terminate standard escape sequences; 0x07 (BEL) terminates OSC sequences
 			if (b >= 0x40 && b <= 0x7E) || b == 0x07 {
 				inEscape = false
 			}
 			continue
 		}
-		if b >= 0x20 && b != 0x7F {
+		if b >= 0x20 && b != 0x7F { // printable ASCII or UTF-8 continuation bytes
 			return true
 		}
 	}

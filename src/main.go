@@ -150,7 +150,7 @@ func startSession(sm *SessionManager, cwd string, desc string, worktreeID string
 		}
 	}
 
-	// Record worktree metadata that persists across session deletions
+	// Store metadata per-worktree (not per-session) so it survives session deletion
 	os.WriteFile(filepath.Join(wtPath, ".nt-source-branch"), []byte(sourceBranch), 0644)
 	if desc != "" {
 		os.WriteFile(filepath.Join(wtPath, ".nt-description"), []byte(desc), 0644)
@@ -162,7 +162,6 @@ func startSession(sm *SessionManager, cwd string, desc string, worktreeID string
 		ID:              id,
 		RepoPath:        repoPath,
 		WorkingCopyPath: wtPath,
-		VcsBackendName:  vcs.Name(),
 		Alive:           true,
 		PID:             -1,
 		StartedAt:       now,
@@ -173,7 +172,7 @@ func startSession(sm *SessionManager, cwd string, desc string, worktreeID string
 		return err
 	}
 
-	// Set env vars so the session ID is discoverable from inside
+	// Expose to scripts/tools running inside the PTY shell
 	os.Setenv("NT_SESSION", id)
 	os.Setenv("NT_BRANCH", worktreeID)
 	defer os.Unsetenv("NT_SESSION")
@@ -216,7 +215,7 @@ func cmdLiveStatus(sm *SessionManager) error {
 	prevLines := 0
 	tick := 0
 	for {
-		// Re-read session files and run expensive operations every 1s (every 10th tick)
+		// Expensive ops (disk I/O, process scan) every ~1s; display refreshes every 100ms for smooth spinners
 		if tick%10 == 0 {
 			sessions = sm.ListAll()
 			worktrees = listWorktrees(sessions)
@@ -576,12 +575,9 @@ func cmdDeleteAll(sm *SessionManager, cwd string) error {
 	}
 
 	running := 0
-	exited := 0
 	for _, s := range sessions {
 		if s.Alive && isProcessAlive(s.PID) {
 			running++
-		} else {
-			exited++
 		}
 	}
 
@@ -654,10 +650,3 @@ func formatTitle(worktreeID, desc string) string {
 	return title
 }
 
-func readWorktreeDesc(wtPath string) string {
-	data, err := os.ReadFile(filepath.Join(wtPath, ".nt-description"))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
-}

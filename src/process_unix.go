@@ -14,7 +14,7 @@ func isProcessAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	err := syscall.Kill(pid, 0)
+	err := syscall.Kill(pid, 0) // signal 0 checks existence without actually signaling
 	return err == nil
 }
 
@@ -80,6 +80,8 @@ func getChildProcessNamesProc(pid int) []string {
 		// Format: <pid> (<name>) <state> <ppid> ...
 		fields := string(data)
 		// Name is between first '(' and last ')'
+		// /proc/pid/stat: "<pid> (<name>) <state> <ppid> ..."
+		// Use LastIndexByte for ')' because process names can contain parens
 		nameStart := strings.IndexByte(fields, '(')
 		nameEnd := strings.LastIndexByte(fields, ')')
 		if nameStart < 0 || nameEnd < 0 || nameEnd <= nameStart {
