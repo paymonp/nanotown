@@ -66,7 +66,7 @@ Live-updating display. nanotown auto-detects running agents (Claude Code, Aider,
 nt merge auth-bug
 ```
 
-Merges a worktree into your current VCS branch. If the worktree was created from a different branch, you'll get a warning before proceeding.
+Merges a worktree into your current VCS branch. If there's a conflict, you can resolve it in any way you'd normally do.
 
 ## Commands
 
@@ -87,9 +87,7 @@ Cleanup:
 
 ## How it works
 
-Each session gets its own git worktree and branch under `.nanotown/` in your repo. The agent runs inside it via a PTY with full terminal passthrough. When done, `nt merge` brings the work back into your current branch.
-
-No daemon, no background process, no database.
+Each session gets its own git worktree and branch under `.nanotown/` in your repo. The agent runs inside it via a PTY with full terminal passthrough. When done, `nt merge` brings the work back into your current branch. No daemon, no background process, no database.
 
 ## .gitignore
 
