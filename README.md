@@ -54,7 +54,7 @@ user/myproject   main       auth-fix   2          add tests
 user/myproject   main       refactor   3, 4       refactor db layer
 ```
 
-Live-updating display. The MODEL column auto-detects which agent is running by scanning child processes. For exited sessions it shows the last detected agent, or `—` if none was detected. Sessions and worktrees from all repos are shown.
+Live-updating display. nanotown auto-detects running agents (Claude Code, Aider, OpenCode, etc.) for the MODEL column. Sessions and worktrees from all repos are shown.
 
 ### Merge work back
 
@@ -86,23 +86,6 @@ Cleanup:
 Each session gets its own git worktree and branch under `.nanotown/` in your repo. The agent runs inside it via a PTY with full terminal passthrough. When done, `nt merge` brings the work back into your current branch.
 
 No daemon, no background process, no database.
-
-## Supported agents
-
-nanotown auto-detects these agents when they're running inside a session:
-
-| Agent | Process name |
-|-------|--------------|
-| Claude Code | `claude` |
-| OpenCode | `opencode` |
-| Aider | `aider` |
-| Kimi | `kimi` |
-| Codex | `codex` |
-| Gemini CLI | `gemini` |
-| GitHub Copilot CLI | `copilot` |
-| Qwen Code | `qwen` |
-
-You can run any CLI tool inside a session — these are just the ones that `nt status` recognizes for the MODEL column.
 
 ## .gitignore
 
