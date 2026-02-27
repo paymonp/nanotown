@@ -30,6 +30,13 @@ func (b *PtyBridge) Launch(workDir string, bannerFile string, title string) erro
 		opts = append(opts, conpty.ConPtyDimensions(w, h))
 	}
 
+	// Green [nt] prompt prefix — $E is cmd.exe's escape character for ANSI codes
+	existingPrompt, _ := os.LookupEnv("PROMPT")
+	if existingPrompt == "" {
+		existingPrompt = "$P$G" // cmd.exe default
+	}
+	os.Setenv("PROMPT", "$E[32m[nt]$E[0m "+existingPrompt)
+
 	startCmd := "cmd.exe"
 	if bannerFile != "" {
 		// /k runs commands then stays open; @ suppresses command echo

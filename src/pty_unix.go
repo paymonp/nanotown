@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 
 	"github.com/creack/pty"
 	"golang.org/x/term"
@@ -17,17 +19,49 @@ func (b *PtyBridge) Launch(workDir string, bannerFile string, title string) erro
 		shell = "/bin/sh"
 	}
 
+	// Build the exec line with prompt customization for supported shells.
+	// Green [nt] prefix, similar to how PS shows before the dir in PowerShell.
+	shellBase := filepath.Base(shell)
+	execLine := fmt.Sprintf(`exec "%s"`, shell)
+
+	switch shellBase {
+	case "bash":
+		rcFile := filepath.Join(workDir, ".nt-bashrc")
+		os.WriteFile(rcFile, []byte(
+			"[ -f ~/.bashrc ] && . ~/.bashrc\n"+
+				`PS1="\[\033[32m\][nt]\[\033[0m\] $PS1"`+"\n",
+		), 0644)
+		execLine = fmt.Sprintf(`exec "%s" --rcfile "%s"`, shell, rcFile)
+	case "zsh":
+		// zsh reads dotfiles from ZDOTDIR instead of $HOME when set
+		zdotdir := filepath.Join(workDir, ".nt-zsh")
+		os.MkdirAll(zdotdir, 0755)
+		os.WriteFile(filepath.Join(zdotdir, ".zshenv"), []byte(
+			"[ -f \"$HOME/.zshenv\" ] && . \"$HOME/.zshenv\"\n",
+		), 0644)
+		os.WriteFile(filepath.Join(zdotdir, ".zshrc"), []byte(
+			"[ -f \"$HOME/.zshrc\" ] && . \"$HOME/.zshrc\"\n"+
+				"PS1=\"%F{green}[nt]%f $PS1\"\n",
+		), 0644)
+		execLine = fmt.Sprintf(`ZDOTDIR="%s" exec "%s"`, zdotdir, shell)
+	}
+
+	// Build launch script: optional banner + optional title + exec into user's shell
+	var parts []string
+	if bannerFile != "" {
+		parts = append(parts, `cat "$1"; rm -f "$1"`)
+	}
+	if title != "" {
+		parts = append(parts, fmt.Sprintf(`printf '\033]0;%s\007'`, title))
+	}
+	parts = append(parts, execLine)
+	script := strings.Join(parts, "; ")
+
 	var cmd *exec.Cmd
 	if bannerFile != "" {
-		// Print banner, set title via OSC escape, delete temp file, then exec into
-		// the user's shell. exec replaces /bin/sh so the user gets their normal shell.
-		script := fmt.Sprintf(`cat "$1"; rm -f "$1"; printf '\033]0;%s\007'; exec "$2"`, title)
-		cmd = exec.Command("/bin/sh", "-c", script, "--", bannerFile, shell)
-	} else if title != "" {
-		script := fmt.Sprintf(`printf '\033]0;%s\007'; exec "$1"`, title)
-		cmd = exec.Command("/bin/sh", "-c", script, "--", shell)
+		cmd = exec.Command("/bin/sh", "-c", script, "--", bannerFile)
 	} else {
-		cmd = exec.Command(shell)
+		cmd = exec.Command("/bin/sh", "-c", script)
 	}
 	cmd.Dir = workDir
 	cmd.Env = os.Environ()

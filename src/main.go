@@ -633,10 +633,10 @@ func cmdDeleteAll(sm *SessionManager, cwd string) error {
 
 func formatBanner(id, worktreeID, desc string) string {
 	var b strings.Builder
-	b.WriteString("\n  nanotown session started\n")
-	fmt.Fprintf(&b, "  session %-6s worktree %s\n", id, worktreeID)
+	b.WriteString("\n  Nanotown session started\n")
+	fmt.Fprintf(&b, "  Session ID: %-6s Worktree ID: %s\n", id, worktreeID)
 	if desc != "" {
-		fmt.Fprintf(&b, "  %s\n", desc)
+		fmt.Fprintf(&b, "  Worktree Description: %s\n", desc)
 	}
 	b.WriteString("\n  Type exit to end the session.\n\n")
 	return b.String()

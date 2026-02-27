@@ -22,7 +22,9 @@ stdout.txt
 .env
 CLAUDE.md
 DESIGN.md
+RELEASING.md
 bin/
+dist/
 .claude/
 nt
 nt.exe
